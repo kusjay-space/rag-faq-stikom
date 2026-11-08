@@ -1,0 +1,24 @@
+# secrets & environment
+.env
+.venv/
+venv/
+
+# artefak python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# index vektor — artefak turunan, bangun ulang dengan: python ingest.py
+# sengaja tidak di-commit: ~10 MB dan berubah tiap kali dokumen diedit
+index.json
+index*.json
+*.ckpt
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/

@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sistem Informasi Kurikulum • ITB STIKOM Bali</title>
+    <!-- Marked.js: render Markdown (*, **) jadi HTML rapi -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- DOMPurify: sanitasi HTML agar aman dari XSS -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-main: #f8fafc;
+        --bg-sidebar: #ffffff;
+        --border: #e2e8f0;
+        --text-primary: #0f172a;
+        --text-secondary: #475569;
+        --text-muted: #94a3b8;
+        --accent: #0284c7;
+        --accent-hover: #0369a1;
+        --surface-bot: #ffffff;
+        --surface-user: #f1f5f9;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          "Inter",
+          -apple-system,
+          sans-serif;
+        background: var(--bg-main);
+        color: var(--text-primary);
+        height: 100vh;
+        display: flex;
+        overflow: hidden;
+      }
+
+      aside {
+        width: 320px;
+        background: var(--bg-sidebar);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        padding: 24px 20px;
+        gap: 24px;
+      }
+
+      .brand {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .brand-badge {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .brand-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--text-primary);
+        letter-spacing: -0.3px;
+      }
+
+      .meta-card {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--text-secondary);
+      }
+      .meta-card strong {
+        color: var(--text-primary);
+      }
+
+      .quick-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+      }
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .quick-btn {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        line-height: 1.4;
+      }
+      .quick-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: #f0f9ff;
+      }
+
+      .system-status {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        background: #22c55e;
+        border-radius: 50%;
+      }
+
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        background: var(--bg-main);
+      }
+
+      header {
+        height: 60px;
+        border-bottom: 1px solid var(--border);
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 32px;
+      }
+      .header-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-secondary);
+      }
+      .header-tag {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        background: #f1f5f9;
+        padding: 4px 8px;
+        border-radius: 4px;
+        color: var(--text-secondary);
+      }
+
+      .chat-feed {
+        flex: 1;
+        overflow-y: auto;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .chat-row {
+        display: flex;
+        flex-direction: column;
+        max-width: 820px;
+        width: 100%;
+        margin: 0 auto;
+        gap: 8px;
+      }
+      .chat-row.user {
+        align-items: flex-end;
+      }
+      .chat-row.bot {
+        align-items: flex-start;
+      }
+
+      .sender-tag {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 0 4px;
+      }
+
+      .bubble {
+        padding: 16px 20px;
+        border-radius: 8px;
+        font-size: 14.5px;
+        line-height: 1.65;
+        color: var(--text-primary);
+      }
+
+      .chat-row.user .bubble {
+        background: var(--surface-user);
+        border: 1px solid #cbd5e1;
+        max-width: 75%;
+        font-weight: 500;
+      }
+
+      .chat-row.bot .bubble {
+        background: var(--surface-bot);
+        border: 1px solid var(--border);
+        width: 100%;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      }
+
+      .bubble p {
+        margin-bottom: 10px;
+      }
+      .bubble p:last-child {
+        margin-bottom: 0;
+      }
+      .bubble ul,
+      .bubble ol {
+        margin: 8px 0 12px 20px;
+        padding: 0;
+      }
+      .bubble li {
+        margin-bottom: 6px;
+      }
+      .bubble strong {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .bubble code {
+        font-family: "JetBrains Mono", monospace;
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+
+      .sources-container {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .source-pill {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        padding: 4px 10px;
+        border-radius: 4px;
+      }
+
+      .input-wrapper {
+        padding: 20px 32px 28px;
+        background: #ffffff;
+        border-top: 1px solid var(--border);
+      }
+      .input-box {
+        max-width: 820px;
+        margin: 0 auto;
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .input-box input {
+        width: 100%;
+        padding: 14px 100px 14px 18px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-family: "Inter", sans-serif;
+        font-size: 14px;
+        outline: none;
+        background: #f8fafc;
+        transition: all 0.2s;
+      }
+      .input-box input:focus {
+        background: #ffffff;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.1);
+      }
+      .input-box button {
+        position: absolute;
+        right: 8px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .input-box button:hover {
+        background: var(--accent-hover);
+      }
+      .input-box button:disabled {
+        background: var(--text-muted);
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div class="brand">
+        <span class="brand-badge">ITB STIKOM BALI</span>
+        <div class="brand-title">Kurikulum Retrieval</div>
+      </div>
+
+      <div class="quick-section">
+        <span class="section-label">Contoh Kueri</span>
+        <button class="quick-btn" onclick="sendQuick(this)">
+          Sebelum sistem operasi terapan harus ambil apa?
+        </button>
+        <button class="quick-btn" onclick="sendQuick(this)">
+          Berapa total SKS dan semester di Teknologi Informasi?
+        </button>
+        <button class="quick-btn" onclick="sendQuick(this)">
+          Total SKS D3 Manajemen Informatika berapa?
+        </button>
+        <button class="quick-btn" onclick="sendQuick(this)">
+          Jam berapa perpustakaan kampus buka?
+        </button>
+      </div>
+
+      <div class="system-status">
+        <div class="status-dot"></div>
+        <span>RAG Engine: Ready (Gemini-768)</span>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <span class="header-title"
+          >Dokumentasi Akademik & Prasyarat Mata Kuliah</span
+        >
+        <span class="header-tag">Kurikulum 2023 / 2025</span>
+      </header>
+
+      <div class="chat-feed" id="chatFeed">
+        <div class="chat-row bot">
+          <span class="sender-tag">Sistem RAG</span>
+          <div class="bubble">
+            Selamat datang. Silakan tanyakan informasi mengenai struktur
+            kurikulum, prasyarat mata kuliah, jumlah SKS per semester, atau
+            jenjang program studi di ITB STIKOM Bali.
+          </div>
+        </div>
+      </div>
+
+      <div class="input-wrapper">
+        <div class="input-box">
+          <input
+            type="text"
+            id="userInput"
+            placeholder="Tanyakan seputar kurikulum, SKS, atau prasyarat..."
+            onkeydown="if (event.key === 'Enter') handleSend();"
+          />
+          <button id="sendBtn" onclick="handleSend()">Kirim</button>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const chatFeed = document.getElementById("chatFeed");
+      const userInput = document.getElementById("userInput");
+      const sendBtn = document.getElementById("sendBtn");
+
+      function scrollToBottom() {
+        chatFeed.scrollTop = chatFeed.scrollHeight;
+      }
+
+      function appendMessage(role, text, sources = []) {
+        const row = document.createElement("div");
+        row.className = `chat-row ${role}`;
+
+        const tag = document.createElement("span");
+        tag.className = "sender-tag";
+        tag.innerText =
+          role === "user" ? "Pertanyaan Anda" : "Asisten Akademik";
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+
+        if (role === "bot") {
+          const rawHtml = marked.parse(text);
+          bubble.innerHTML = DOMPurify.sanitize(rawHtml);
+
+          if (sources && sources.length > 0) {
+            const srcWrap = document.createElement("div");
+            srcWrap.className = "sources-container";
+            sources.forEach((s, idx) => {
+              const pill = document.createElement("span");
+              pill.className = "source-pill";
+              pill.innerText = `[${idx + 1}] ${s.file} (skor: ${s.score})`;
+              srcWrap.appendChild(pill);
+            });
+            bubble.appendChild(srcWrap);
+          }
+        } else {
+          bubble.innerText = text;
+        }
+
+        row.appendChild(tag);
+        row.appendChild(bubble);
+        chatFeed.appendChild(row);
+        scrollToBottom();
+      }
+
+      async function handleSend() {
+        const query = userInput.value.trim();
+        if (!query) return;
+
+        appendMessage("user", query);
+        userInput.value = "";
+        userInput.disabled = true;
+        sendBtn.disabled = true;
+        sendBtn.innerText = "Mencari...";
+
+        try {
+          const res = await fetch("/api/tanya", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: query }),
+          });
+          const data = await res.json();
+          appendMessage("bot", data.answer, data.sources || []);
+        } catch (err) {
+          appendMessage("bot", "Terjadi kegagalan komunikasi dengan backend.");
+        } finally {
+          userInput.disabled = false;
+          sendBtn.disabled = false;
+          sendBtn.innerText = "Kirim";
+          userInput.focus();
+          scrollToBottom();
+        }
+      }
+
+      function sendQuick(btn) {
+        userInput.value = btn.innerText;
+        handleSend();
+      }
+    </script>
+  </body>
+</html>
