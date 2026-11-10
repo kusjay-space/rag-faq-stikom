@@ -1,10 +1,8 @@
 # RAG FAQ Kurikulum — ITB STIKOM Bali
 
-Chatbot akademik berbasis **Retrieval-Augmented Generation (RAG)**. Pertanyaan pengguna dijawab
-**hanya** dari dokumen resmi kurikulum dan profil institusi yang ada di `data/docs-kurikulum/`,
-lengkap dengan daftar sumber dan skor kemiripannya.
-
-Tidak ada model yang di-fine-tune. Seluruh pengetahuan sistem berasal dari dokumen teks biasa
+Chatbot akademik berbasis **Retrieval-Augmented Generation (RAG)**. Pertanyaan dijawab **hanya** dari
+dokumen resmi kurikulum dan profil institusi di `data/docs-kurikulum/`, lengkap dengan daftar sumber
+dan skor kemiripan. Tidak ada model yang di-fine-tune — seluruh pengetahuan berasal dari berkas teks
 yang bisa diedit siapa pun tanpa menyentuh kode.
 
 ---
@@ -13,10 +11,11 @@ yang bisa diedit siapa pun tanpa menyentuh kode.
 
 | Fitur | Keterangan |
 | :-- | :-- |
-| Pencarian semantik | Pakai embedding, jadi cocok berdasarkan **makna**, bukan kecocokan kata persis |
+| Pencarian semantik | Pakai embedding (768 dimensi), cocok berdasarkan **makna**, bukan kecocokan kata |
 | Jawaban bergrounding | Model dilarang menjawab di luar konteks dokumen |
-| Transparansi sumber | Setiap jawaban menyertakan file sumber + skor kemiripan |
-| Tanpa basis data | Vektor disimpan di satu file `index.json`, pencarian pakai NumPy |
+| Transparansi sumber | Setiap jawaban menyertakan berkas sumber + skor kemiripan |
+| Penyimpanan vektor di PostgreSQL | pgvector + index HNSW; data ikut ter-backup bersama tabel lain |
+| Telemetri pencarian | Pertanyaan, jumlah hasil, skor teratas, dan latensi dicatat di `rag.retrieval_logs` |
 | UI siap pakai | Satu halaman HTML, tanpa build step |
 
 ---
@@ -24,62 +23,51 @@ yang bisa diedit siapa pun tanpa menyentuh kode.
 ## Arsitektur
 
 ```
-                        TAHAP 1 — INGEST (sekali, dijalankan manual)
+TAHAP 1 — INGEST (manual, saat dokumen berubah)          python ingest.py
   data/docs-kurikulum/*.md
-        │
-        ├─ potong jadi chunk (per paragraf, "\\n\\n")
-        ├─ buang chunk sampah (terlalu pendek / heading tanpa isi / baris metadata)
-        └─ embed tiap chunk  ──►  Google Gemini Embedding API
-                                      │
-                                      ▼
-                                 index.json      (666 chunk, vektor 768 dimensi)
+        │  potong per paragraf; buang <30 karakter, heading gantung, baris "Sumber data:"
+        ▼
+  Gemini Embedding API  ──►  rag.documents + rag.chunks (vector(768))
+                             progres dicatat di rag.pipeline_runs
 
-                        TAHAP 2 — QUERY (tiap kali user bertanya)
+TAHAP 2 — MENJAWAB (per pertanyaan)                      python app.py
   pertanyaan user
+        │  embed pertanyaan
+        ▼
+  SELECT ... ORDER BY embedding <=> vektor  →  buang skor < threshold
+        │  buang teks kembar, ambil TOP_K teratas
+        ▼
+  prompt (TOP_K potongan + nomor + nama berkas)  ──►  Gemini LLM (temperature 0.0)
         │
-        ├─ embed pertanyaan          ──►  vektor query (768 dimensi)
-        ├─ hitung cosine similarity ke SEMUA chunk di index.json
-        ├─ buang yang skornya < 0.60 (threshold)
-        ├─ urutkan, buang chunk berisi teks kembar, ambil 8 teratas (top_k)
-        │
-        └─ susun prompt: instruksi + 8 potongan konteks + pertanyaan
-                    │
-                    ▼
-              Gemini LLM  (temperature 0.0)
-                    │
-                    ▼
-        { "answer": "...", "sources": [ {file, score}, ... ] }
+        ▼
+  { "answer": ..., "sources": [{file, score}, ...] }  ──►  Flask /api/tanya
+
+EVALUASI (terpisah, schema `eval`)                       lihat RENCANA-RAGAS.md
 ```
 
 ---
 
-## Struktur Folder
+## Struktur Berkas
 
 ```
 rag-faq-stikom/
-├── app.py                        # server Flask + endpoint POST /api/tanya
-├── rag.py                        # mesin retrieval + pemanggilan LLM
-├── ingest.py                     # pemotongan dokumen + pembuatan index.json
-├── index.html                    # antarmuka chat (HTML + CSS + JS, tanpa build)
+├── app.py                      # server Flask + endpoint POST /api/tanya
+├── rag.py                      # get_embedding / retrieve / build_prompt / generate / ask_question
+├── db.py                       # satu-satunya modul yang tahu nama schema & tabel PostgreSQL
+├── ingest.py                   # potong dokumen -> embedding -> simpan ke PostgreSQL
+├── index.html                  # antarmuka chat (HTML + CSS + JS, tanpa build step)
+├── sql/schema.sql              # skema lengkap dari nol (runtime + evaluasi + ekstensi + hak akses)
 ├── requirements.txt
-├── .env.example                  # contoh konfigurasi (aman untuk di-commit)
-├── .env                          # konfigurasi asli + API key  (TIDAK di-commit)
-│
-├── data/
-│   └── docs-kurikulum/           # SUMBER KEBENARAN — 7 dokumen .md
-│       ├── profil-umum-stikom-bali.md
-│       ├── daftar-prodi-stikom-bali.md
-│       ├── kurikulum-ti-s1-teknologi-informasi.md
-│       ├── kurikulum-si-s1-sistem-informasi.md
-│       ├── kurikulum-sk-s1-sistem-komputer.md
-│       ├── kurikulum-bd-s1-bisnis-digital.md
-│       └── kurikulum-mi-d3-manajemen-informatika.md
-│
-└── index.json                    # ARTEFAK TURUNAN — hasil ingest.py (bisa dibangun ulang)
+├── .env.example                # contoh konfigurasi (aman di-commit)
+├── .env                        # konfigurasi asli + API key (TIDAK di-commit)
+├── README.md                   # berkas ini
+├── RENCANA-RAGAS.md            # rencana evaluasi (langkah berikutnya)
+├── data/docs-kurikulum/        # SUMBER KEBENARAN — 7 dokumen .md
+└── index.json                  # artefak lama sebelum pindah ke PostgreSQL; tidak dipakai kode
 ```
 
-**Aturan penting:** `data/docs-kurikulum/` adalah sumber kebenaran. `index.json` hanya hasil
-olahan. Kalau dokumen diperbaiki, index **harus** dibangun ulang agar jawaban ikut berubah.
+`data/docs-kurikulum/` adalah sumber kebenaran. Memperbaiki jawaban = memperbaiki dokumen, lalu
+jalankan `python ingest.py`.
 
 ---
 
@@ -90,36 +78,117 @@ olahan. Kalau dokumen diperbaiki, index **harus** dibangun ulang agar jawaban ik
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux / macOS
 pip install -r requirements.txt
 ```
 
-### 2. Konfigurasi
+### 2. Siapkan PostgreSQL + pgvector
+
+Laragon (Windows) sudah membawa PostgreSQL + pgvector — cukup nyalakan service-nya.
+
+```bash
+# sekali saja: buat database dan role aplikasi
+psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE rag_kurikulum;"
+psql -U postgres -h 127.0.0.1 -c "CREATE ROLE rag_app LOGIN PASSWORD 'ganti-password-ini';"
+
+# pasang skema lengkap (butuh superuser untuk CREATE EXTENSION vector)
+psql -U postgres -h 127.0.0.1 -d rag_kurikulum -f sql/schema.sql
+```
+
+### 3. Konfigurasi
 
 ```bash
 copy .env.example .env          # Windows
-# cp .env.example .env          # Linux / macOS
 ```
 
-Lalu isi `GEMINI_API_KEY` di `.env` dengan API key dari
-<https://aistudio.google.com/apikey>.
+Isi `GEMINI_API_KEY` (ambil di <https://aistudio.google.com/apikey>) dan `DATABASE_URL`.
 
-### 3. Bangun index
+### 4. Isi data
 
 ```bash
-python ingest.py
+python ingest.py            # hanya berkas baru/berubah yang di-embed
+python ingest.py --force    # paksa embed ulang semuanya (misal setelah ganti model/chunking)
 ```
 
-Proses ini memanggil API embedding satu kali per chunk. Untuk 666 chunk, selesaikan dalam
-beberapa menit. Perhatikan batas kuota gratis — lihat bagian Troubleshooting.
+Jalankan berulang kali sebisa mungkin: berkas yang isinya tidak berubah dilewati tanpa panggilan API.
+Rinciannya di [Sinkronisasi data](#sinkronisasi-data).
 
-### 4. Jalankan
+### 5. Jalankan
 
 ```bash
 python app.py
 ```
 
-Buka <http://127.0.0.1:5000>. Endpoint API: `POST /api/tanya` dengan body `{"question": "..."}`.
+Buka <http://127.0.0.1:5000>. Endpoint API: `POST /api/tanya` body `{"question": "..."}`.
+
+---
+
+## Basis Data
+
+```
+DATABASE rag_kurikulum
+├── schema rag    (runtime)   documents, chunks, pipeline_runs, retrieval_logs
+├── schema eval   (offline)   eval_questions, _question_chunks, _configs, _runs,
+│                             _answers, _scores, _retrieval_hits, v_config_comparison
+├── schema ext    (pgvector)  118 fungsi/operator vector_*
+└── schema public  kosong
+```
+
+Kenapa begitu:
+
+- **`rag` vs `eval`** — objek untuk melayani pengguna dipisah dari objek pengukuran kualitas.
+  `DROP SCHEMA eval CASCADE;` tidak merusak aplikasi, dan backup tabel produksi tidak membengkak oleh
+  ratusan baris jawaban evaluasi.
+- **`ext`** — `CREATE EXTENSION vector` tanpa `SCHEMA` menaruh 118 fungsi `vector_*` di `public` dan
+  tercampur dengan tabel kita saat dibuka di GUI.
+- **`public` kosong** — sengaja; setiap objek punya rumah yang jelas.
+- `content_md5` **bukan** `UNIQUE`: teks boilerplate berulang antar berkas (666 baris, 639 teks unik).
+  Dedupe dikerjakan saat query di `rag.retrieve()`.
+
+Hak akses: `rag_app` (runtime) dan `rag_eval` (evaluasi); keduanya bukan superuser.
+`search_path = rag, ext, public` dipaksa di dua tempat — di role server **dan** saat konek (`db.py`) —
+supaya aplikasi tetap benar di database baru tanpa bergantung setelan server.
+
+Sengaja **tidak** dipakai: partisi tabel, soft delete, kolom jumlah token, trigger `updated_at`,
+materialized view. Skalanya masih ratusan baris; semuanya menambah kerumitan tanpa manfaat.
+
+### Catatan implementasi
+
+- **Urutan hasil dibuat deterministik.** Skor dibulatkan 3 desimal (angka yang ditampilkan ke
+  pengguna), seri dipecah nama berkas + isi dengan `COLLATE "C"` (urutan byte = urutan `str` Python).
+  Sebabnya pgvector menghitung jarak dalam float4 (selisih terukur ≤ 6e-7 vs NumPy float64) — tanpa
+  ini urutan potongan berskor hampir sama bisa berubah antar eksekusi.
+- **`seq` = nomor paragraf di dalam berkas**, dan `(document_id, seq)` unik. Itulah yang membuat
+  `ingest.py` boleh dijalankan ulang tanpa menggandakan data.
+- **Dedupe teks dikerjakan saat query** (`rag.retrieve()`), bukan lewat `UNIQUE` di DB — supaya satu
+  teks hanya muncul sekali di hasil walau ada di beberapa berkas.
+- **`latency_ms` di `retrieval_logs`** mencakup panggilan embedding Gemini + query database, bukan
+  hanya SQL.
+- **Aturan pemotongan** (`ingest.py`) sengaja belum diubah dari versi awal: potong per paragraf,
+  buang <30 karakter, buang heading gantung, buang baris `Sumber data:`. Angka evaluasi sebelum/sesudah
+  perbaikan chunking nanti hanya sahih kalau aturan lama ini dikembalikan lagi.
+- Tabel `eval.*` **kosong sampai evaluasi dijalankan** (`RENCANA-RAGAS.md`).
+
+### Sinkronisasi data
+
+`ingest.py` membandingkan `sha256` tiap berkas `.md` dengan yang tercatat di `rag.documents`, lalu hanya
+mengerjakan yang perlu. Database selalu jadi cermin folder dokumen — tidak ada langkah "bersihkan DB"
+manual (dan tidak ada `TRUNCATE` di mana pun).
+
+| Kejadian di `data/docs-kurikulum/` | Yang dikerjakan `ingest.py` | Panggilan API |
+| :-- | :-- | :-- |
+| Tidak ada yang berubah | Lewat. Tidak ada baris `pipeline_runs` baru. | **0** |
+| Berkas baru | Embed berkas itu, `INSERT` dokumen + potongan | hanya berkas itu |
+| Isi berkas berubah | `DELETE` potongan berkas itu, embed ulang dari nol | hanya berkas itu |
+| Berkas dipendekkan | Sama seperti di atas → **potongan lama tidak tersisa** | hanya berkas itu |
+| Berkas dihapus dari disk | Dokumen + potongannya ikut `DELETE` | 0 |
+| Ganti `MODEL_EMBED`/`EMBED_DIM`/aturan chunking | `--force` untuk embed ulang semua | seluruh korpus |
+
+Potongan berkas yang berubah dihapus dulu sebelum ditulis ulang (bukan ditimpa per nomor), jadi sisa
+potongan dari versi dokumen yang lebih panjang tidak mungkin tertinggal. `sha256` di `rag.documents`
+ditulis paling akhir sebagai penanda berkas sudah utuh, jadi ingest yang mati di tengah jalan akan
+mengulang berkas itu pada eksekusi berikutnya — bukan menganggapnya beres. Setiap eksekusi yang
+benar-benar mengerjakan sesuatu menulis jejaknya di `rag.pipeline_runs` (`status` = `running` /
+`completed` / `failed`, `chunk_count`, `chunks_done`, `notes` kalau gagal).
 
 ---
 
@@ -128,16 +197,17 @@ Buka <http://127.0.0.1:5000>. Endpoint API: `POST /api/tanya` dengan body `{"que
 | Variabel | Default | Fungsi |
 | :-- | :-- | :-- |
 | `GEMINI_API_KEY` | — | Kunci API Google Gemini. **Jangan pernah di-commit.** |
-| `MODEL_EMBED` | `gemini-embedding-001` | Model untuk mengubah teks jadi vektor |
-| `MODEL_LLM` | `gemini-3.1-flash-lite` | Model yang menyusun jawaban akhir |
-| `EMBED_DIM` | `768` | Panjang vektor. **Wajib sama** saat ingest dan saat query |
+| `MODEL_EMBED` | `gemini-embedding-001` | Model pengubah teks jadi vektor |
+| `MODEL_LLM` | `gemini-3.1-flash-lite` | Model penyusun jawaban |
+| `EMBED_DIM` | `768` | Panjang vektor; **wajib sama** saat ingest dan query |
 | `DOCS_DIR` | `data/docs-kurikulum` | Folder dokumen sumber |
-| `INDEX_FILE` | `index.json` | Lokasi file index |
-| `SIMILARITY_THRESHOLD` | `0.60` | Ambang batas skor; di bawah ini chunk dibuang |
+| `SIMILARITY_THRESHOLD` | `0.60` | Ambang skor; di bawah ini potongan dibuang |
 | `TOP_K` | `8` | Jumlah potongan konteks yang dikirim ke LLM |
+| `DATABASE_URL` | — | Koneksi PostgreSQL; password hanya di `.env` |
+| `INGEST_JEDA_DETIK` | `65` | Jeda antar batch 80 teks saat ingest (hindari `429`) |
 
-Mengubah `EMBED_DIM` atau `MODEL_EMBED` membuat vektor lama tidak kompatibel — index harus
-dibangun ulang dari nol.
+Mengubah `EMBED_DIM` atau `MODEL_EMBED` membuat vektor lama tidak kompatibel — jalankan `ingest.py`
+dari nol (untuk uji cepat tanpa jeda: `INGEST_JEDA_DETIK=0 python ingest.py`).
 
 ---
 
@@ -145,25 +215,16 @@ dibangun ulang dari nol.
 
 | Gejala | Sebab | Solusi |
 | :-- | :-- | :-- |
-| `429 RESOURCE_EXHAUSTED`, `retryDelay` ~30-60s | batas per menit | tunggu, jalankan ulang |
-| `429`, `retryDelay` ribuan detik | kuota **harian** habis | tunggu reset (00:00 waktu Pasifik = 16:00 WITA) |
-| Bot bilang "informasi tidak ditemukan" padahal datanya ada | retrieval gagal, bukan LLM | cek isi `index.json`, lihat skor, turunkan threshold |
-| Jawaban salah padahal dokumen benar | dokumennya memang salah | perbaiki `.md`, bangun ulang index |
-| `ImportError: cannot import name 'genai'` | menjalankan `python` global, bukan venv | aktifkan venv dulu |
+| `PostgreSQL tidak bisa dihubungi` | service mati | Laragon → menu PostgreSQL → Start |
+| `relation "chunks" does not exist` | konek ke database/schema salah | cek `DATABASE_URL`; `SELECT current_database(), current_schema();` |
+| `429 RESOURCE_EXHAUSTED`, `retryDelay` ~30–60 s | batas per menit | tunggu, jalankan ulang |
+| `429`, `retryDelay` ribuan detik | kuota **harian** habis | tunggu reset (00:00 Pasifik = 16:00 WITA) |
+| Bot bilang "tidak ditemukan" padahal datanya ada | retrieval meleset, bukan LLM | cek `rag.retrieval_logs`, turunkan `SIMILARITY_THRESHOLD` |
+| Jawaban salah padahal dokumen benar | dokumennya yang salah | perbaiki `.md`, jalankan `ingest.py` |
+| `ImportError: cannot import name 'genai'` | memakai `python` global | aktifkan venv dulu |
 
 **Catatan kuota:** batas free tier dihitung **per teks**, bukan per request HTTP. Satu panggilan
-berisi 80 teks tetap dihitung 80. Membesarkan batch hanya menghemat jumlah request, bukan kuota.
-
----
-
-## Catatan Teknis
-
-- `data/docs-kurikulum/` adalah **sumber kebenaran**; `index.json` hanya hasil olahan.
-  Memperbaiki jawaban berarti memperbaiki dokumen lalu membangun ulang index.
-- Menambah dokumen: taruh berkas `.md` baru di `data/docs-kurikulum/`, lalu jalankan `python ingest.py`.
-- Mengubah `EMBED_DIM` atau `MODEL_EMBED` membatalkan seluruh index lama — bangun ulang dari nol.
-- Dokumen sebaiknya mencantumkan `Sumber data:` dan tanggal, supaya data yang cepat berubah
-  (pejabat, akreditasi) bisa ditelusuri dan diperbarui.
+berisi 80 teks tetap dihitung 80 teks — memperbesar batch hanya menghemat jumlah request.
 
 ---
 
@@ -174,7 +235,9 @@ berisi 80 teks tetap dihitung 80. Membesarkan batch hanya menghemat jumlah reque
 | Python | 3.10+ | bahasa |
 | google-genai | 2.33.0 | SDK Gemini (embedding + generate) |
 | Flask | 3.1.3 | server web |
-| NumPy | 2.2.6 | perhitungan cosine similarity |
+| psycopg | 3.2.10 | driver PostgreSQL |
+| PostgreSQL | 14.5 | basis data |
+| pgvector | 0.8.7 | tipe `vector` + index HNSW |
 | python-dotenv | 1.2.4 | membaca `.env` |
 
 ---
@@ -182,5 +245,12 @@ berisi 80 teks tetap dihitung 80. Membesarkan batch hanya menghemat jumlah reque
 ## Sumber Data
 
 Isi `data/docs-kurikulum/` disusun dari situs resmi program studi dan institusi ITB STIKOM Bali.
-Berkas profil institusi mencantumkan alamat `Sumber data:` beserta periode jabatan, sehingga
-data yang cepat berubah (pejabat, akreditasi) bisa ditelusuri dan diperbarui.
+Berkas profil institusi mencantumkan alamat `Sumber data:` beserta periode jabatan, sehingga data
+yang cepat berubah (pejabat, akreditasi) bisa ditelusuri dan diperbarui.
+
+---
+
+## Langkah Berikutnya
+
+Fondasi data **selesai**: 666 potongan, 7 dokumen, satu backend (PostgreSQL + pgvector), dan
+`ingest.py` yang aman dijalankan ulang. Tahap berikutnya evaluasi kuantitatif: lihat `RENCANA-RAGAS.md`.
