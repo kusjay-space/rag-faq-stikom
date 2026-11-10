@@ -198,7 +198,10 @@ benar-benar mengerjakan sesuatu menulis jejaknya di `rag.pipeline_runs` (`status
 | :-- | :-- | :-- |
 | `GEMINI_API_KEY` | — | Kunci API Google Gemini. **Jangan pernah di-commit.** |
 | `MODEL_EMBED` | `gemini-embedding-001` | Model pengubah teks jadi vektor |
-| `MODEL_LLM` | `gemini-3.1-flash-lite` | Model penyusun jawaban |
+| `MODEL_LLM` | `gemini-3.1-flash-lite` | Model penyusun jawaban (dipakai saat `LLM_BASE_URL` kosong) |
+| `LLM_BASE_URL` | — | Endpoint OpenAI-compatible untuk LLM, mis. `http://homelab-jay:20128/v1`. **Kosong = langsung ke Gemini** |
+| `LLM_API_KEY` | — | Kunci gateway (tidak dipakai kalau `LLM_BASE_URL` kosong) |
+| `LLM_MODEL` | — | Id model di gateway, mis. `experientiallabs/deepseek-v4-flash`; kosong = pakai `MODEL_LLM` |
 | `EMBED_DIM` | `768` | Panjang vektor; **wajib sama** saat ingest dan query |
 | `DOCS_DIR` | `data/docs-kurikulum` | Folder dokumen sumber |
 | `SIMILARITY_THRESHOLD` | `0.60` | Ambang skor; di bawah ini potongan dibuang |
@@ -208,6 +211,25 @@ benar-benar mengerjakan sesuatu menulis jejaknya di `rag.pipeline_runs` (`status
 
 Mengubah `EMBED_DIM` atau `MODEL_EMBED` membuat vektor lama tidak kompatibel — jalankan `ingest.py`
 dari nol (untuk uji cepat tanpa jeda: `INGEST_JEDA_DETIK=0 python ingest.py`).
+
+### Model LLM: langsung ke Gemini atau lewat gateway
+
+`rag.generate()` punya dua jalur, dipilih otomatis dari `LLM_BASE_URL`:
+
+| `LLM_BASE_URL` | Yang dipakai | Model |
+| :-- | :-- | :-- |
+| kosong | SDK `google-genai` | `MODEL_LLM` |
+| terisi (mis. 9router) | HTTP `POST {base}/chat/completions` pakai pustaka bawaan Python | `LLM_MODEL` (fallback `MODEL_LLM`) |
+
+Poin penting:
+
+- **Embedding tidak ikut berpindah.** Untuk gateway OpenAI-compatible, vektor tetap dari
+  `MODEL_EMBED` (Gemini) — jadi DB tidak perlu di-ingest ulang.
+- Sebagian gateway menempelkan penanda SSE `data: [DONE]` di ekor respons non-stream; `rag.py`
+  membaca objek JSON pertama (`raw_decode`) supaya tidak gagal parse. Ini pernah bikin error
+  `JSONDecodeError: Extra data`.
+- Mengganti model LLM mengubah isi jawaban. Kalau tabel evaluasi dibandingkan, **satu tabel = satu
+  model**; jangan campur jawaban dua model tanpa menandainya.
 
 ---
 

@@ -1,5 +1,7 @@
+import json
 import os
 import time
+import urllib.request
 import db
 from dotenv import load_dotenv
 from google import genai
@@ -13,6 +15,10 @@ MODEL_EMBED = os.getenv("MODEL_EMBED")
 EMBED_DIM = int(os.getenv("EMBED_DIM"))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD"))
 TOP_K = int(os.getenv("TOP_K"))
+# terisi = LLM lewat endpoint OpenAI-compatible (gateway/9router); kosong = langsung ke Gemini
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
 
 PROMPT_TEMPLATE = """Anda adalah Asisten Virtual Kurikulum & Akademik ITB STIKOM Bali.
     Tugas Anda adalah menjawab pertanyaan civitas akademika HANYA berdasarkan konteks dokumen kurikulum resmi di bawah.
@@ -62,12 +68,29 @@ def build_prompt(question: str, items: list[dict]) -> str:
 
 
 def generate(prompt: str, temperature: float = 0.0) -> str:
-    response = client.models.generate_content(
-        model=MODEL_LLM,
-        contents=prompt,
-        config={"temperature": temperature},
+    if not LLM_BASE_URL:
+        response = client.models.generate_content(
+            model=MODEL_LLM,
+            contents=prompt,
+            config={"temperature": temperature},
+        )
+        return response.text
+
+    payload = json.dumps({
+        "model": LLM_MODEL or MODEL_LLM,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+    }).encode()
+    req = urllib.request.Request(
+        f"{LLM_BASE_URL}/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {LLM_API_KEY}"},
     )
-    return response.text
+    with urllib.request.urlopen(req, timeout=120) as response:
+        body = response.read().decode("utf-8", "replace")
+    # sebagian gateway menempelkan penanda SSE ("data: [DONE]") di ekor respons
+    return json.JSONDecoder().raw_decode(body.lstrip())[0]["choices"][0]["message"]["content"]
 
 
 def ask_question(question: str, top_k: int = TOP_K,
