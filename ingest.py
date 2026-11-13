@@ -7,11 +7,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 
-load_dotenv()
+load_dotenv(override=True)
 
 client = genai.Client()
 
-MODEL_EMBED = os.getenv("MODEL_EMBED")
+EMBED_MODEL = os.getenv("EMBED_MODEL")
 EMBED_DIM = int(os.getenv("EMBED_DIM"))
 DOCS_DIR = Path(os.getenv("DOCS_DIR"))
 BATCH_SIZE = 80
@@ -23,7 +23,7 @@ def get_embedding_batch(texts: list[str]) -> list[list[float]]:
     while True:
         try:
             response = client.models.embed_content(
-                model=MODEL_EMBED,
+                model=EMBED_MODEL,
                 contents=texts,
                 config={"output_dimensionality": EMBED_DIM},
             )
@@ -96,7 +96,7 @@ def main():
         print("Tidak ada yang perlu dikerjakan — nol panggilan API.")
         return
 
-    run_id = db.start_run(MODEL_EMBED, EMBED_DIM, BATCH_SIZE, 0)
+    run_id = db.start_run(EMBED_MODEL, EMBED_DIM, BATCH_SIZE, 0)
     done = 0
     try:
         for path, sha256, size_bytes in changed:

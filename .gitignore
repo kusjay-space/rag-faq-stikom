@@ -23,5 +23,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# catatan kerja lokal — sengaja tidak di-commit
-RENCANA-RAGAS.md
+
+# cache embedding untuk evaluasi (dibangun ulang otomatis)
+eval/.cache/
+eval/log/

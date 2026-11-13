@@ -2,10 +2,19 @@ import os
 import psycopg
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SEARCH_PATH = os.getenv("DB_SEARCH_PATH", "rag,ext,public")
+EVAL_DATABASE_URL = os.getenv("EVAL_DATABASE_URL", "")
+EVAL_SEARCH_PATH = os.getenv("EVAL_DB_SEARCH_PATH", "eval,rag,ext,public")
+
+
+def connect_eval():
+    """Koneksi role rag_eval: menulis schema eval, membaca rag.* (tanpa hak tulis runtime)."""
+    if not EVAL_DATABASE_URL:
+        raise RuntimeError("EVAL_DATABASE_URL belum diisi di .env")
+    return psycopg.connect(EVAL_DATABASE_URL, options=f"-c search_path={EVAL_SEARCH_PATH}")
 
 
 def connect():

@@ -11,7 +11,7 @@ def home():
     return render_template("index.html")
 
 @app.route("/api/tanya", methods=["POST"])
-def api_tanya():
+def api_ask():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()[:500]
     if not question:

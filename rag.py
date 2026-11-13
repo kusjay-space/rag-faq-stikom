@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 from google import genai
 
 
-load_dotenv()
+load_dotenv(override=True)
 
 client = genai.Client()
-MODEL_LLM = os.getenv("MODEL_LLM")
-MODEL_EMBED = os.getenv("MODEL_EMBED")
+GEMINI_LLM_MODEL = os.getenv("GEMINI_LLM_MODEL")
+EMBED_MODEL = os.getenv("EMBED_MODEL")
 EMBED_DIM = int(os.getenv("EMBED_DIM"))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD"))
 TOP_K = int(os.getenv("TOP_K"))
@@ -38,7 +38,7 @@ PROMPT_TEMPLATE = """Anda adalah Asisten Virtual Kurikulum & Akademik ITB STIKOM
 
 def get_embedding(text: str) -> list[float]:
     response = client.models.embed_content(
-        model=MODEL_EMBED,
+        model=EMBED_MODEL,
         contents=text,
         config={"output_dimensionality": EMBED_DIM},
     )
@@ -67,17 +67,44 @@ def build_prompt(question: str, items: list[dict]) -> str:
     return PROMPT_TEMPLATE.format(context=context, question=question)
 
 
+def _clean_text(teks: str | None) -> str:
+    """Buang pagar kode yang kadang ditambahkan model gateway, lalu rapikan spasi."""
+    if not teks:
+        return ""
+    isi = teks.strip()
+    if isi.startswith("```"):
+        baris = isi.splitlines()
+        if baris and baris[0].startswith("```"):
+            baris = baris[1:]
+        if baris and baris[-1].strip().startswith("```"):
+            baris = baris[:-1]
+        isi = "\n".join(baris).strip()
+    return isi
+
+
 def generate(prompt: str, temperature: float = 0.0) -> str:
+    """Jawaban LLM. Jawaban kosong dianggap gagal (raise) supaya pemanggil bisa mencoba ulang,
+    bukan tersimpan sebagai jawaban kosong yang lalu merusak penilaian RAGAS."""
+    for percobaan in range(2):
+        jawaban = _generate_once(prompt, temperature)
+        if jawaban:
+            return jawaban
+        if percobaan == 0:
+            time.sleep(2)
+    raise RuntimeError("model mengembalikan jawaban kosong")
+
+
+def _generate_once(prompt: str, temperature: float) -> str:
     if not LLM_BASE_URL:
         response = client.models.generate_content(
-            model=MODEL_LLM,
+            model=GEMINI_LLM_MODEL,
             contents=prompt,
             config={"temperature": temperature},
         )
-        return response.text
+        return _clean_text(response.text)
 
     payload = json.dumps({
-        "model": LLM_MODEL or MODEL_LLM,
+        "model": LLM_MODEL or GEMINI_LLM_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
     }).encode()
@@ -90,7 +117,8 @@ def generate(prompt: str, temperature: float = 0.0) -> str:
     with urllib.request.urlopen(req, timeout=120) as response:
         body = response.read().decode("utf-8", "replace")
     # sebagian gateway menempelkan penanda SSE ("data: [DONE]") di ekor respons
-    return json.JSONDecoder().raw_decode(body.lstrip())[0]["choices"][0]["message"]["content"]
+    isi = json.JSONDecoder().raw_decode(body.lstrip())[0]["choices"][0]["message"]["content"]
+    return _clean_text(isi)
 
 
 def ask_question(question: str, top_k: int = TOP_K,

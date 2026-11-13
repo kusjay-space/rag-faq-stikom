@@ -17,6 +17,7 @@ yang bisa diedit siapa pun tanpa menyentuh kode.
 | Penyimpanan vektor di PostgreSQL | pgvector + index HNSW; data ikut ter-backup bersama tabel lain |
 | Telemetri pencarian | Pertanyaan, jumlah hasil, skor teratas, dan latensi dicatat di `rag.retrieval_logs` |
 | UI siap pakai | Satu halaman HTML, tanpa build step |
+| Evaluasi terukur | FASE A: 15 konfigurasi x 50 soal inti (gratis, tanpa LLM). FASE B (RAGAS) 50 soal x 4 metrik — penilai kini dimatikan |
 
 ---
 
@@ -37,12 +38,13 @@ TAHAP 2 — MENJAWAB (per pertanyaan)                      python app.py
   SELECT ... ORDER BY embedding <=> vektor  →  buang skor < threshold
         │  buang teks kembar, ambil TOP_K teratas
         ▼
-  prompt (TOP_K potongan + nomor + nama berkas)  ──►  Gemini LLM (temperature 0.0)
+  prompt (TOP_K potongan + nomor + nama berkas)  ──►  model bahasa (temperature 0.0,
+                                                        gateway DeepSeek atau Gemini langsung)
         │
         ▼
   { "answer": ..., "sources": [{file, score}, ...] }  ──►  Flask /api/tanya
 
-EVALUASI (terpisah, schema `eval`)                       lihat RENCANA-RAGAS.md
+EVALUASI (terpisah, schema `eval`)                       lihat bagian Evaluasi di bawah
 ```
 
 ---
@@ -56,14 +58,16 @@ rag-faq-stikom/
 ├── db.py                       # satu-satunya modul yang tahu nama schema & tabel PostgreSQL
 ├── ingest.py                   # potong dokumen -> embedding -> simpan ke PostgreSQL
 ├── index.html                  # antarmuka chat (HTML + CSS + JS, tanpa build step)
+├── eval/                       # bank soal + FASE A (gratis) + FASE B (RAGAS) + pelaporan
+#   eval/laporan.py            ringkasan hasil evaluasi dari DB
+#   eval/laporan_operasional.py ringkasan pemakaian harian dari rag.retrieval_logs
+├── docs/diagram/               # *.png: arsitektur sistem, alur FASE A, alur FASE B (+ sumber .excalidraw)
+├── requirements.txt            # aplikasi + evaluasi (satu berkas, Python 3.12)
 ├── sql/schema.sql              # skema lengkap dari nol (runtime + evaluasi + ekstensi + hak akses)
-├── requirements.txt
 ├── .env.example                # contoh konfigurasi (aman di-commit)
 ├── .env                        # konfigurasi asli + API key (TIDAK di-commit)
 ├── README.md                   # berkas ini
-├── RENCANA-RAGAS.md            # rencana evaluasi (langkah berikutnya)
-├── data/docs-kurikulum/        # SUMBER KEBENARAN — 7 dokumen .md
-└── index.json                  # artefak lama sebelum pindah ke PostgreSQL; tidak dipakai kode
+└── data/docs-kurikulum/        # SUMBER KEBENARAN — 9 dokumen .md (kurikulum, profil, dosen, karyawan)
 ```
 
 `data/docs-kurikulum/` adalah sumber kebenaran. Memperbaiki jawaban = memperbaiki dokumen, lalu
@@ -166,7 +170,7 @@ materialized view. Skalanya masih ratusan baris; semuanya menambah kerumitan tan
 - **Aturan pemotongan** (`ingest.py`) sengaja belum diubah dari versi awal: potong per paragraf,
   buang <30 karakter, buang heading gantung, buang baris `Sumber data:`. Angka evaluasi sebelum/sesudah
   perbaikan chunking nanti hanya sahih kalau aturan lama ini dikembalikan lagi.
-- Tabel `eval.*` **kosong sampai evaluasi dijalankan** (`RENCANA-RAGAS.md`).
+- Tabel `eval.*` **kosong sampai evaluasi dijalankan** (lihat bagian Evaluasi).
 
 ### Sinkronisasi data
 
@@ -181,7 +185,7 @@ manual (dan tidak ada `TRUNCATE` di mana pun).
 | Isi berkas berubah | `DELETE` potongan berkas itu, embed ulang dari nol | hanya berkas itu |
 | Berkas dipendekkan | Sama seperti di atas → **potongan lama tidak tersisa** | hanya berkas itu |
 | Berkas dihapus dari disk | Dokumen + potongannya ikut `DELETE` | 0 |
-| Ganti `MODEL_EMBED`/`EMBED_DIM`/aturan chunking | `--force` untuk embed ulang semua | seluruh korpus |
+| Ganti `EMBED_MODEL`/`EMBED_DIM`/aturan chunking | `--force` untuk embed ulang semua | seluruh korpus |
 
 Potongan berkas yang berubah dihapus dulu sebelum ditulis ulang (bukan ditimpa per nomor), jadi sisa
 potongan dari versi dokumen yang lebih panjang tidak mungkin tertinggal. `sha256` di `rag.documents`
@@ -196,20 +200,35 @@ benar-benar mengerjakan sesuatu menulis jejaknya di `rag.pipeline_runs` (`status
 
 | Variabel | Default | Fungsi |
 | :-- | :-- | :-- |
-| `GEMINI_API_KEY` | — | Kunci API Google Gemini. **Jangan pernah di-commit.** |
-| `MODEL_EMBED` | `gemini-embedding-001` | Model pengubah teks jadi vektor |
-| `MODEL_LLM` | `gemini-3.1-flash-lite` | Model penyusun jawaban (dipakai saat `LLM_BASE_URL` kosong) |
+| `GEMINI_API_KEY` | — | Kunci API Google Gemini (embedding + jalur LLM Gemini langsung). **Jangan pernah di-commit.** |
+| `EMBED_MODEL` | `gemini-embedding-001` | Model pengubah teks jadi vektor (selalu Gemini) |
+| `GEMINI_LLM_MODEL` | `gemini-3.1-flash-lite` | Model penyusun jawaban pada jalur Gemini langsung (dipakai **hanya bila** `LLM_BASE_URL` kosong) |
 | `LLM_BASE_URL` | — | Endpoint OpenAI-compatible untuk LLM, mis. `http://homelab-jay:20128/v1`. **Kosong = langsung ke Gemini** |
 | `LLM_API_KEY` | — | Kunci gateway (tidak dipakai kalau `LLM_BASE_URL` kosong) |
-| `LLM_MODEL` | — | Id model di gateway, mis. `experientiallabs/deepseek-v4-flash`; kosong = pakai `MODEL_LLM` |
+| `LLM_MODEL` | — | Id model di gateway, mis. `tokenharbor/deepseek-v4-flash:free`; **wajib terisi** kalau `LLM_BASE_URL` diisi |
 | `EMBED_DIM` | `768` | Panjang vektor; **wajib sama** saat ingest dan query |
 | `DOCS_DIR` | `data/docs-kurikulum` | Folder dokumen sumber |
 | `SIMILARITY_THRESHOLD` | `0.60` | Ambang skor; di bawah ini potongan dibuang |
 | `TOP_K` | `8` | Jumlah potongan konteks yang dikirim ke LLM |
-| `DATABASE_URL` | — | Koneksi PostgreSQL; password hanya di `.env` |
+
+**Aturan penamaan (jangan dicampur).** Satu variabel untuk satu jalur:
+- `EMBED_MODEL` + `EMBED_DIM` — embedding, **selalu** lewat Gemini; dipakai `ingest.py` dan `rag.py`.
+- `GEMINI_LLM_MODEL` — model Gemini langsung; hanya dipakai bila `LLM_BASE_URL` kosong.
+- `LLM_BASE_URL` + `LLM_API_KEY` + `LLM_MODEL` — jalur gateway OpenAI-compatible.
+
+Tidak ada lagi `MODEL_LLM`/`MODEL_EMBED`: dulu dua nama itu mudah tertukar dengan `LLM_MODEL`.
+
+| `DATABASE_URL` | — | Koneksi PostgreSQL untuk aplikasi (`rag_app`); password hanya di `.env` |
+| `EVAL_DATABASE_URL` | — | Koneksi role `rag_eval` untuk skrip `eval/`: tulis schema `eval`, baca `rag.*` |
+| `EVAL_EMBED_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Embedding **lokal** (fastembed) untuk metrik RAGAS — nol kuota API |
 | `INGEST_JEDA_DETIK` | `65` | Jeda antar batch 80 teks saat ingest (hindari `429`) |
 
-Mengubah `EMBED_DIM` atau `MODEL_EMBED` membuat vektor lama tidak kompatibel — jalankan `ingest.py`
+> Semua modul memuat `.env` dengan `load_dotenv(..., override=True)`: **nilai di `.env` selalu
+> menang** atas variabel lingkungan shell. Sebelumnya `override` default (`False`) membuat variabel
+> shell lama (mis. `EVAL_JUDGE_BASE_URL` sisa sesi sebelumnya) diam-diam menimpa `.env` — penilaian
+> jadi berjalan lewat penilai yang salah tanpa peringatan.
+
+Mengubah `EMBED_DIM` atau `EMBED_MODEL` membuat vektor lama tidak kompatibel — jalankan `ingest.py`
 dari nol (untuk uji cepat tanpa jeda: `INGEST_JEDA_DETIK=0 python ingest.py`).
 
 ### Model LLM: langsung ke Gemini atau lewat gateway
@@ -218,13 +237,13 @@ dari nol (untuk uji cepat tanpa jeda: `INGEST_JEDA_DETIK=0 python ingest.py`).
 
 | `LLM_BASE_URL` | Yang dipakai | Model |
 | :-- | :-- | :-- |
-| kosong | SDK `google-genai` | `MODEL_LLM` |
-| terisi (mis. 9router) | HTTP `POST {base}/chat/completions` pakai pustaka bawaan Python | `LLM_MODEL` (fallback `MODEL_LLM`) |
+| kosong | SDK `google-genai` | `GEMINI_LLM_MODEL` |
+| terisi (mis. 9router) | HTTP `POST {base}/chat/completions` pakai pustaka bawaan Python | `LLM_MODEL` |
 
 Poin penting:
 
 - **Embedding tidak ikut berpindah.** Untuk gateway OpenAI-compatible, vektor tetap dari
-  `MODEL_EMBED` (Gemini) — jadi DB tidak perlu di-ingest ulang.
+  `EMBED_MODEL` (Gemini) — jadi DB tidak perlu di-ingest ulang.
 - Sebagian gateway menempelkan penanda SSE `data: [DONE]` di ekor respons non-stream; `rag.py`
   membaca objek JSON pertama (`raw_decode`) supaya tidak gagal parse. Ini pernah bikin error
   `JSONDecodeError: Extra data`.
@@ -232,6 +251,105 @@ Poin penting:
   model**; jangan campur jawaban dua model tanpa menandainya.
 
 ---
+
+## Evaluasi (`eval/`)
+
+Cara kerja FASE A vs RAGAS, diagram alur (`docs/diagram/*.png`), tabel hasil, keterbatasan, dan
+kesimpulan ada di bagian ini.
+
+Penjawab aplikasi **wajib model yang sama dengan yang dinilai** (`LLM_BASE_URL` + `LLM_MODEL`
+menunjuk gateway `tokenharbor/deepseek-v4-flash:free`). Bila penjawab diganti, angka RAGAS di
+bawah tidak lagi menggambarkan aplikasi dan FASE B harus dijalankan ulang. Embedding tetap
+`gemini-embedding-001` pada kedua tahap.
+
+Ringkasnya: FASE A (sapuan retrieval, tanpa LLM, deterministik) dipakai **memilih** `top_k` &
+threshold; FASE B (RAGAS 0.3.9, 4 metrik, LLM judge) **menyatakan mutu jawaban** pada konfigurasi
+terpilih. Keduanya dipakai karena RAGAS tidak punya metrik penolakan pertanyaan di luar cakupan dan
+tidak dapat membedakan antar-`k` (derau penilai 0,04–0,08 lebih besar dari beda antarkonfigurasi).
+
+Bank pertanyaan ada di `eval/pertanyaan*.jsonl` — 92 soal, tapi **yang dipakai mengukur mutu 50 soal
+inti**: 25 parafrase, 15 sintesis, 10 negatif (sisanya 15 jebakan dan 27 pembanding, dikeluarkan dari
+angka mutu). Jawaban acuan disalin dari dokumen `.md` (bukan hasil generate LLM). Pertanyaan negatif
+sengaja **tanpa** potongan acuan — sistem dinilai benar kalau tidak menemukan apa pun.
+
+```bash
+# 1. muat bank soal + tentukan potongan acuan (tanpa LLM)
+python eval/muat_pertanyaan.py --hapus
+
+# 2. FASE A — sapuan top_k x threshold, 15 konfigurasi, nol panggilan LLM
+python eval/fase_a_retrieval.py
+
+# 3. pilih konfigurasi hasil FASE A, lalu jawab (LLM) — FASE B dinilai hanya kalau ada penilai
+.venv\Scripts\python.exe eval/fase_b_ragas.py --config A-k8-t60 --answer
+.venv\Scripts\python.exe eval/fase_b_ragas.py --config A-k8-t60 --score
+
+# 4. laporan angka
+python eval/laporan.py
+```
+
+Konfigurasi penilai (`.env`): `EVAL_JUDGE_BASE_URL` + `EVAL_JUDGE_MODEL` + `EVAL_JUDGE_API_KEY` —
+default menunjuk gateway 9router (`http://homelab-jay:20128/v1`, model
+`tokenharbor/deepseek-v4-flash:free`). Jangan pakai Gemini untuk penilaian (kuota habis & jalur
+kodenya sudah dihapus). Kosongkan `EVAL_JUDGE_BASE_URL` untuk mematikan penilaian — `build_judge()`
+menolak jalan kalau semua base URL kosong.
+
+Angka FASE A yang tersimpan (k=8, 50 soal inti, satu baris per soal):
+
+| threshold | recall | r_gold | presisi | token | top_neg | tolak negatif |
+| --: | --: | --: | --: | --: | --: | --: |
+| 0,50 | 0,975 | 0,900 | 0,219 | 631 | 0,761 | 0/10 |
+| **0,60** (default) | 0,975 | 0,900 | 0,219 | 571 | 0,761 | 0/10 |
+| 0,70 | 0,975 | 0,900 | 0,219 | 548 | 0,628 | 2/10 |
+| 0,75 | 0,975 | 0,900 | 0,226 | 486 | 0,483 | 4/10 |
+| 0,80 | 0,975 | 0,850 | 0,344 | 363 | 0,089 | 9/10 |
+| 0,85 | 0,825 | 0,700 | 0,411 | 172 | 0,089 | 9/10 |
+| 0,90 | 0,525 | 0,425 | 0,396 | 42 | 0,000 | 10/10 |
+
+Bacaan: threshold 0,50 **tidak pernah lebih baik** dari 0,60 (identik, token malah naik). 0,60→0,75
+mempertahankan recall & `r_gold` penuh sambil memangkas token 15 % dan menolak 4/10 pertanyaan di
+luar cakupan. Kerugian mulai muncul di 0,80 (`r_gold` −0,05) dan rusak di ≥0,85. Titik seimbang
+0,70–0,75; 0,60 tetap dipakai aplikasi karena paling aman untuk dokumen baru.
+
+### Uji temperature 0,0 vs 0,3 (50 soal inti, konteks identik)
+
+Retrieval kedua run identik (k=8, threshold 0,60); yang berubah hanya temperature penjawab. Angka =
+rata-rata berpasangan pada soal yang bernilai di kedua konfigurasi (D-k8-t60 vs T-k8-t60).
+
+| metrik | n | temp 0,0 | temp 0,3 | selisih |
+| :-- | --: | --: | --: | --: |
+| faithfulness | 50 | 0,843 | 0,881 | +0,038 |
+| answer_relevancy | 50 | 0,643 | 0,704 | +0,061 |
+| context_precision | 50 | 0,834 | 0,808 | **−0,026** |
+| context_recall | 50 | 0,810 | 0,860 | **+0,050** |
+
+`context_precision` memanggil penilai delapan kali per soal (satu per potongan konteks), jadi paling
+lambat; beberapa potongan sempat gagal karena batas laju penilai gratis dan diulang sampai tuntas
+50/50 (nilai NULL tidak ditulis, jadi tidak ada angka karangan).
+
+Karena konteks yang dinilai identik, dua metrik konteks **seharusnya tidak berubah** — tetapi
+bergerak −0,027 dan +0,050. Itu ukuran langsung derau penilai antar-run. Kesimpulan: **temperature
+0,0 vs 0,3 tidak menghasilkan perbedaan yang bisa dibedakan dari derau penilai**; temperature 0,0
+dipertahankan karena determinisme/reproduktibilitas, bukan karena skornya lebih tinggi.
+
+FASE B pada konfigurasi aplikasi `D-k8-t60` (50 soal x 4 metrik, penilai
+`tokenharbor/deepseek-v4-flash:free` via gateway 9router, satu proses): faithfulness 0,843;
+answer_relevancy 0,643; context_precision 0,834; context_recall 0,810. Seluruh 200 baris nilai
+(4 metrik x 50 soal) sudah diverifikasi berlabel penilai gateway — baris lama berlabel
+`gemini-3.1-flash-lite` dihapus 12 Nov 2026. Selisih
+antar-k di FASE B tidak bisa dibedakan dari derau penilai, jadi pilihan `top_k` bertumpu pada
+FASE A.
+
+Menyiapkan lingkungan evaluasi sekali saja:
+
+```bash
+uv venv .venv --python 3.12
+uv pip install -r requirements.txt --python .venv/Scripts/python.exe
+```
+
+Satu berkas requirements untuk aplikasi + evaluasi (pin `ragas 0.3.9` + `langchain 0.3.27` wajib
+pasangan itu; `ragas 0.4.x` + `langchain 1.x` gagal import). Penilai LLM memakai gateway
+OpenAI-compatible, embedding metrik dihitung lokal lewat `fastembed` — kuota Gemini hanya untuk
+aplikasi.
 
 ## Troubleshooting
 
@@ -244,6 +362,9 @@ Poin penting:
 | Bot bilang "tidak ditemukan" padahal datanya ada | retrieval meleset, bukan LLM | cek `rag.retrieval_logs`, turunkan `SIMILARITY_THRESHOLD` |
 | Jawaban salah padahal dokumen benar | dokumennya yang salah | perbaiki `.md`, jalankan `ingest.py` |
 | `ImportError: cannot import name 'genai'` | memakai `python` global | aktifkan venv dulu |
+| `ModuleNotFoundError: langchain_community.chat_models.vertexai` | ragas 0.4.x + langchain 1.x tidak cocok | pakai pin di `requirements.txt` (ragas 0.3.9 + langchain 0.3.27) |
+| `Permission denied for schema eval` | konek pakai `rag_app` (sengaja tidak punya hak `eval`) | pakai `EVAL_DATABASE_URL` (`rag_eval`) |
+| RAGAS `Model ... is not supported in TextEmbedding` | nama model bukan milik fastembed | cek `TextEmbedding.list_supported_models()` |
 
 **Catatan kuota:** batas free tier dihitung **per teks**, bukan per request HTTP. Satu panggilan
 berisi 80 teks tetap dihitung 80 teks — memperbesar batch hanya menghemat jumlah request.
@@ -274,5 +395,8 @@ yang cepat berubah (pejabat, akreditasi) bisa ditelusuri dan diperbarui.
 
 ## Langkah Berikutnya
 
-Fondasi data **selesai**: 666 potongan, 7 dokumen, satu backend (PostgreSQL + pgvector), dan
-`ingest.py` yang aman dijalankan ulang. Tahap berikutnya evaluasi kuantitatif: lihat `RENCANA-RAGAS.md`.
+Fondasi data **selesai**: 724 potongan, 9 dokumen (termasuk daftar 225 dosen & 158 karyawan),
+satu backend (PostgreSQL + pgvector), dan `ingest.py` yang aman dijalankan ulang.
+Pengukuran sudah pernah dijalankan penuh: `eval/fase_a_retrieval.py` (15 konfigurasi x 50 soal inti, gratis,
+tanpa LLM) dan `eval/fase_b_ragas.py --config D-k8-t60 --answer --score` (50 soal x 4 metrik RAGAS).
+Angka terverifikasi ada di bagian **Evaluasi** di atas; penilai RAGAS kini dimatikan di `.env`.

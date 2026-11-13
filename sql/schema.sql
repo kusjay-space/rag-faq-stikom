@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS eval.eval_questions (
 CREATE TABLE IF NOT EXISTS eval.eval_question_chunks (
   eval_question_id bigint NOT NULL REFERENCES eval.eval_questions(id) ON DELETE CASCADE,
   chunk_id         bigint NOT NULL REFERENCES rag.chunks(id) ON DELETE CASCADE,
+  is_gold          boolean NOT NULL DEFAULT false,  -- potongan acuan paling relevan (cakupan tertinggi)
   PRIMARY KEY (eval_question_id, chunk_id)
 );
 
